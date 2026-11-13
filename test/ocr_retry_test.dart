@@ -20,15 +20,22 @@ RAM: 8 GB DDRS 5600 A-DATA            DEMO345678 | 96 месеца
     expect(best, card);
     final rows = extractPhotoTable(best);
     expect(rows.length, 3);
-    expect(rows.map((r) => r['expiry']).toList(),
-        ['2029-03-19', '2034-03-19', '2034-03-19']);
+    expect(rows.map((r) => r['expiry']).toList(), [
+      '2029-03-19',
+      '2034-03-19',
+      '2034-03-19',
+    ]);
   });
   test('layout retry prefers more rows rather than the first match', () {
-    final single = card.split('\n').where((l) => !l.startsWith('RAM:')).join('\n');
+    final single = card
+        .split('\n')
+        .where((l) => !l.startsWith('RAM:'))
+        .join('\n');
     expect(chooseOcrText([single, card]), card);
   });
   test('normal labeled documents and empty results still work', () {
-    const normal = 'Product: Laptop\nWarranty period: 24 months\nSerial number: ABC123456';
+    const normal =
+        'Product: Laptop\nWarranty period: 24 months\nSerial number: ABC123456';
     expect(chooseOcrText(['', normal]), normal);
     expect(chooseOcrText(['', '  ']), '');
   });

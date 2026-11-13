@@ -18,13 +18,24 @@ int ocrTextScore(String text) {
   if (text.trim().isEmpty) return -1;
   final rows = extractPhotoTable(text);
   if (rows.isNotEmpty) {
-    return 1000 + rows.length * 100 +
+    return 1000 +
+        rows.length * 100 +
         rows.where((r) => r.containsKey('expiry')).length * 10;
   }
   final fields = extractFields(text);
   var score = 0;
-  for (final key in ['product', 'store', 'customer', 'model', 'serial',
-      'reference', 'receipt', 'start', 'expiry', 'months']) {
+  for (final key in [
+    'product',
+    'store',
+    'customer',
+    'model',
+    'serial',
+    'reference',
+    'receipt',
+    'start',
+    'expiry',
+    'months',
+  ]) {
     if ((fields[key] ?? '').trim().isNotEmpty) {
       score += key == 'product' || key == 'expiry' ? 15 : 5;
     }
@@ -45,8 +56,11 @@ String chooseOcrText(Iterable<String> candidates) {
   return best;
 }
 
-Future<String> readDocument(PendingDoc d,
-    {String language = 'auto', String pageMode = '6'}) async {
+Future<String> readDocument(
+  PendingDoc d, {
+  String language = 'auto',
+  String pageMode = '6',
+}) async {
   if (d.doc.ext == 'pdf') {
     await pdfrxFlutterInitialize();
     final pdf = await PdfDocument.openData(d.bytes);
@@ -58,17 +72,24 @@ Future<String> readDocument(PendingDoc d,
       }
       final text = result.toString();
       if (text.trim().isEmpty) {
-        throw StateError('Image-only PDF: import a photo or enter the details manually.');
+        throw StateError(
+          'Image-only PDF: import a photo or enter the details manually.',
+        );
       }
       return text;
     } finally {
       pdf.dispose();
     }
   }
-  final langs = language == 'auto' ? autoOcrLanguages :
-      language == 'bul_only' ? 'bul' :
-      language == 'bul' ? 'bul+eng' :
-      documentLanguages.containsKey(language) ? language : 'eng';
+  final langs = language == 'auto'
+      ? autoOcrLanguages
+      : language == 'bul_only'
+      ? 'bul'
+      : language == 'bul'
+      ? 'bul+eng'
+      : documentLanguages.containsKey(language)
+      ? language
+      : 'eng';
   final mode = const ['3', '6', '11'].contains(pageMode) ? pageMode : '6';
   final tmp = await getTemporaryDirectory();
   final f = File(p.join(tmp.path, '${d.doc.id}.${d.doc.ext}'));
@@ -83,8 +104,13 @@ Future<String> readDocument(PendingDoc d,
       if (!attempts.add('$selected/$layout')) return;
       try {
         if (mobile) {
-          candidates.add(await FlutterTesseractOcr.extractText(f.path,
-              language: selected, args: {'psm': layout, 'preserve_interword_spaces': '1'}));
+          candidates.add(
+            await FlutterTesseractOcr.extractText(
+              f.path,
+              language: selected,
+              args: {'psm': layout, 'preserve_interword_spaces': '1'},
+            ),
+          );
         } else {
           await dataDir.create(recursive: true);
           for (final lang in selected.split('+')) {
@@ -92,13 +118,31 @@ Future<String> readDocument(PendingDoc d,
             final dest = File(p.join(dataDir.path, name));
             if (!await dest.exists() || await dest.length() == 0) {
               final data = await rootBundle.load('assets/tessdata/$name');
-              await dest.writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
+              await dest.writeAsBytes(
+                data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+                flush: true,
+              );
             }
           }
-          final result = await Process.run('tesseract', [f.path, 'stdout',
-            '--tessdata-dir', dataDir.path, '-l', selected, '--psm', layout,
-            '-c', 'preserve_interword_spaces=1'], stdoutEncoding: utf8, stderrEncoding: utf8);
-          if (result.exitCode != 0) throw StateError('Tesseract OCR failed: ${result.stderr}');
+          final result = await Process.run(
+            'tesseract',
+            [
+              f.path,
+              'stdout',
+              '--tessdata-dir',
+              dataDir.path,
+              '-l',
+              selected,
+              '--psm',
+              layout,
+              '-c',
+              'preserve_interword_spaces=1',
+            ],
+            stdoutEncoding: utf8,
+            stderrEncoding: utf8,
+          );
+          if (result.exitCode != 0)
+            throw StateError('Tesseract OCR failed: ${result.stderr}');
           candidates.add(result.stdout as String);
         }
       } catch (error) {
@@ -111,8 +155,10 @@ Future<String> readDocument(PendingDoc d,
     await attempt(langs, mode);
     final first = chooseOcrText(candidates);
     final fields = extractFields(first);
-    final hasCompleteRecord = (fields['product'] ?? '').isNotEmpty &&
-        ((fields['expiry'] ?? '').isNotEmpty || (fields['months'] ?? '').isNotEmpty);
+    final hasCompleteRecord =
+        (fields['product'] ?? '').isNotEmpty &&
+        ((fields['expiry'] ?? '').isNotEmpty ||
+            (fields['months'] ?? '').isNotEmpty);
     // Always compare a recognized table with an alternate layout: a first
     // attempt may have found only one of several rows.
     if (!hasCompleteRecord || extractPhotoTable(first).isNotEmpty) {

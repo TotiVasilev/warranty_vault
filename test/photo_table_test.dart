@@ -17,9 +17,17 @@ RAM: 8 GB DDR5 5600 A-DATA        DEMO003456       96 mecena     5 §
     final rows = extractPhotoTable(card);
     expect(rows.length, 3);
     expect(rows[0]['product'], 'MB: ASROCK B650M PG LIGHTNING/PHANTOM GAMING');
-    expect(rows.map((r) => r['serial']).toList(), ['DEMO001234','DEMO002345','DEMO003456']);
-    expect(rows.map((r) => r['months']).toList(), ['36','96','96']);
-    expect(rows.map((r) => r['expiry']).toList(), ['2029-03-19','2034-03-19','2034-03-19']);
+    expect(rows.map((r) => r['serial']).toList(), [
+      'DEMO001234',
+      'DEMO002345',
+      'DEMO003456',
+    ]);
+    expect(rows.map((r) => r['months']).toList(), ['36', '96', '96']);
+    expect(rows.map((r) => r['expiry']).toList(), [
+      '2029-03-19',
+      '2034-03-19',
+      '2034-03-19',
+    ]);
     expect(rows.first['customer'], 'Пример Клиент');
     expect(rows.first['store'], 'Computers Service');
   });
@@ -30,7 +38,12 @@ RAM: 8 GB DDR5 5600 A-DATA        DEMO003456       96 mecena     5 §
     expect(rows.first.containsKey('expiry'), false);
   });
   test('ordinary warranty does not activate table parser', () {
-    expect(extractPhotoTable('Product: Laptop\nSerial number: 123456\nWarranty: 24 months'), isEmpty);
+    expect(
+      extractPhotoTable(
+        'Product: Laptop\nSerial number: 123456\nWarranty: 24 months',
+      ),
+      isEmpty,
+    );
   });
   test('single row table also works', () {
     final lines = card.split('\n');
