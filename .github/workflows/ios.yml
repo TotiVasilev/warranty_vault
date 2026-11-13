@@ -1,0 +1,84 @@
+name: Warranty Vault iPhone build
+
+on:
+  push:
+    branches: [ios-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Prepare iOS project and OCR assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter --version
+          if [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
+            flutter create --platforms=ios --no-pub .
+          fi
+          mkdir -p assets/tessdata
+          for lang in eng bul deu nld fra spa ita ron pol por ell tur rus ukr; do
+            file="assets/tessdata/$lang.traineddata"
+            if [ ! -s "$file" ] || [ "$(wc -c < "$file" | tr -d ' ')" -lt 100000 ]; then
+              curl --fail --location --retry 3 "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/$lang.traineddata" -o "$file"
+            fi
+          done
+          if [ ! -s assets/tessdata-LICENSE.txt ]; then
+            curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/LICENSE -o assets/tessdata-LICENSE.txt
+          fi
+          python3 - <<'PY'
+          import json, plistlib, pathlib, re
+          assets = pathlib.Path('assets')
+          (assets/'tessdata_config.json').write_text(json.dumps({'files': [f'{x}.traineddata' for x in 'eng bul deu nld fra spa ita ron pol por ell tur rus ukr'.split()]}))
+          plist = pathlib.Path('ios/Runner/Info.plist')
+          with plist.open('rb') as f:
+              data = plistlib.load(f)
+          data['NSCameraUsageDescription'] = 'Take photos of warranty cards and receipts.'
+          data['NSPhotoLibraryUsageDescription'] = 'Choose warranty and receipt photos to import.'
+          data['CFBundleDisplayName'] = 'Warranty Vault'
+          with plist.open('wb') as f:
+              plistlib.dump(data, f, sort_keys=False)
+          project = pathlib.Path('ios/Runner.xcodeproj/project.pbxproj')
+          text = project.read_text()
+          text = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);', lambda m: 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;' if float('.'.join(m[1].split('.')[:2])) < 15 else m[0], text)
+          project.write_text(text)
+          podfile = pathlib.Path('ios/Podfile')
+          if podfile.exists():
+              text = podfile.read_text()
+              pattern = r"(?m)^\s*#?\s*platform\s+:ios,\s*['\"]([\d.]+)['\"].*$"
+              match = re.search(pattern, text)
+              if match:
+                  version = max(15.0, float('.'.join(match[1].split('.')[:2])))
+                  text = re.sub(pattern, f"platform :ios, '{version}'", text, count=1)
+              else:
+                  text = "platform :ios, '15.0'\n" + text
+              podfile.write_text(text)
+          PY
+      - name: Build unsigned iPhone app
+        run: |
+          flutter pub get
+          flutter build ios --release --no-codesign
+      - name: Package IPA for local signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/wv/Payload"
+          ditto build/ios/iphoneos/Runner.app "$RUNNER_TEMP/wv/Payload/Runner.app"
+          # SwiftyTesseract also looks for a native app-bundle tessdata folder.
+          ditto assets/tessdata "$RUNNER_TEMP/wv/Payload/Runner.app/tessdata"
+          cd "$RUNNER_TEMP/wv"
+          /usr/bin/zip -q -r -y "$GITHUB_WORKSPACE/WarrantyVault.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WarrantyVault-iPhone
+          path: WarrantyVault.ipa
+          if-no-files-found: error
