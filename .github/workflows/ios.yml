@@ -46,10 +46,31 @@ jobs:
           if [ ! -s assets/tessdata-LICENSE.txt ]; then
             curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/LICENSE -o assets/tessdata-LICENSE.txt
           fi
+          # Prepare dependencies before the camera patch needs CocoaPods.
           python3 - <<'PY'
-          import json, plistlib, pathlib, re
-          assets = pathlib.Path('assets')
-          (assets/'tessdata_config.json').write_text(json.dumps({'files': [f'{x}.traineddata' for x in 'eng bul deu nld fra spa ita ron pol por ell tur rus ukr'.split()]}))
+          import json, pathlib
+          (pathlib.Path('assets')/'tessdata_config.json').write_text(json.dumps({'files': [f'{x}.traineddata' for x in 'eng bul deu nld fra spa ita ron pol por ell tur rus ukr'.split()]}))
+          PY
+          flutter pub get
+          # A SwiftPM-enabled Flutter project may not have a Podfile until
+          # CocoaPods fallback is needed. Use the installed Flutter template.
+          if [ ! -f ios/Podfile ]; then
+            flutter_root="$(python3 -c 'import pathlib, shutil; print(pathlib.Path(shutil.which("flutter")).resolve().parents[1])')"
+            template="$flutter_root/packages/flutter_tools/templates/cocoapods/Podfile-ios"
+            test -s "$template" || { echo "Missing Flutter Podfile template: $template"; exit 1; }
+            cp "$template" ios/Podfile
+            echo "Created ios/Podfile from Flutter template"
+          fi
+          python3 - <<'PY'
+          import plistlib, pathlib, re
+          # Ensure the fallback pods' framework search paths reach Runner.
+          # Do not remove the existing SwiftPM integration.
+          for config in ('Debug', 'Release'):
+              p = pathlib.Path(f'ios/Flutter/{config}.xcconfig')
+              text = p.read_text()
+              include = f'#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.{config.lower()}.xcconfig"'
+              if include not in text and f'Pods-Runner.{config.lower()}.xcconfig' not in text:
+                  p.write_text(include + '\n' + text)
           plist = pathlib.Path('ios/Runner/Info.plist')
           with plist.open('rb') as f:
               data = plistlib.load(f)
@@ -76,8 +97,8 @@ jobs:
           text = re.sub(r'INFOPLIST_KEY_UIApplicationSceneManifest_Generation\s*=\s*YES;', 'INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;', text)
           project.write_text(text)
           podfile = pathlib.Path('ios/Podfile')
-          if not podfile.exists():
-              raise SystemExit('Expected the existing iOS CocoaPods project')
+          if not podfile.is_file():
+              raise SystemExit('Podfile preparation failed')
           if podfile.exists():
               text = podfile.read_text()
               pattern = r"(?m)^\s*#?\s*platform\s+:ios,\s*['\"]([\d.]+)['\"].*$"
@@ -94,15 +115,15 @@ jobs:
                   text = text[:hook.end()] + "\n    require_relative '../tools/ios/patch_tesseract'\n    wv_patch_tesseract(installer)" + text[hook.end():]
               podfile.write_text(text)
           PY
+          ruby -c ios/Podfile
+          grep -F "wv_patch_tesseract(installer)" ios/Podfile
       - name: Run scanner regression checks
         run: |
           swift -D WV_OCR_SELF_TEST tools/ios/AppDelegate.swift
-          flutter pub get
-          flutter test
+          flutter test --no-pub
       - name: Build unsigned iPhone app
         run: |
-          flutter pub get
-          flutter build ios --release --no-codesign --build-number=3
+          flutter build ios --release --no-codesign --no-pub --build-number=4
       - name: Package IPA for local signing
         shell: bash
         run: |
@@ -139,9 +160,9 @@ jobs:
           PY
           /usr/bin/plutil -lint "$RUNNER_TEMP/wv/Payload/Runner.app/Info.plist"
           cd "$RUNNER_TEMP/wv"
-          /usr/bin/zip -q -r -y "$GITHUB_WORKSPACE/WarrantyVault-v3.ipa" Payload
+          /usr/bin/zip -q -r -y "$GITHUB_WORKSPACE/WarrantyVault-v4.ipa" Payload
       - uses: actions/upload-artifact@v4
         with:
-          name: WarrantyVault-iPhone-v3
-          path: WarrantyVault-v3.ipa
+          name: WarrantyVault-iPhone-v4
+          path: WarrantyVault-v4.ipa
           if-no-files-found: error
