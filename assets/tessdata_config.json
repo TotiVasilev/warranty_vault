@@ -1,0 +1,18 @@
+{
+    "files":  [
+                  "eng.traineddata",
+                  "bul.traineddata",
+                  "deu.traineddata",
+                  "nld.traineddata",
+                  "fra.traineddata",
+                  "spa.traineddata",
+                  "ita.traineddata",
+                  "ron.traineddata",
+                  "pol.traineddata",
+                  "por.traineddata",
+                  "ell.traineddata",
+                  "tur.traineddata",
+                  "rus.traineddata",
+                  "ukr.traineddata"
+              ]
+}
