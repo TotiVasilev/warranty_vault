@@ -11,6 +11,52 @@ import 'photo_table.dart';
 import 'vault.dart';
 
 const autoOcrLanguages = 'eng+bul+deu+nld';
+const _iosOcr = MethodChannel('warranty_vault/ios_ocr');
+
+// Retain the chosen document language and English technical product names.
+String iosOcrLanguages(String language) {
+  if (language == 'auto') return autoOcrLanguages;
+  if (language == 'bul_only') return 'bul';
+  if (!documentLanguages.containsKey(language)) return 'eng';
+  return language == 'eng' ? 'eng' : '$language+eng';
+}
+
+Future<String> _readIosPhoto(
+  String path,
+  String language,
+  String layout,
+) async {
+  final candidates = <String>[];
+  Object? lastError;
+  Future<void> attempt(String langs, {required bool vision}) async {
+    try {
+      final result = await _iosOcr
+          .invokeListMethod<String>('recognize', {
+            'path': path,
+            'language': langs,
+            'vision': vision,
+            'layout': layout,
+          })
+          .timeout(const Duration(seconds: 90));
+      if (result != null)
+        candidates.addAll(result.where((s) => s.trim().isNotEmpty));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  await attempt(iosOcrLanguages(language), vision: true);
+  // Auto may mix Cyrillic and Latin. Retry a narrower model only when needed.
+  if (language == 'auto' &&
+      ocrTextScore(chooseOcrText(candidates)) < 30 &&
+      lastError == null) {
+    await attempt('bul+eng', vision: false);
+  }
+  if (candidates.isEmpty && lastError != null) {
+    throw StateError('iPhone OCR failed: $lastError');
+  }
+  return chooseOcrText(candidates);
+}
 
 // Prefer a coherent product table over isolated labels, and do not join text
 // from separate OCR attempts (that could mix unrelated serials and dates).
@@ -94,12 +140,13 @@ Future<String> readDocument(
   final tmp = await getTemporaryDirectory();
   final f = File(p.join(tmp.path, '${d.doc.id}.${d.doc.ext}'));
   await f.writeAsBytes(d.bytes);
-  final mobile = Platform.isAndroid || Platform.isIOS;
+  final mobile = Platform.isAndroid;
   final dataDir = Directory(p.join(tmp.path, 'wv_tessdata_v03'));
   final candidates = <String>[];
   final attempts = <String>{};
   Object? lastError;
   try {
+    if (Platform.isIOS) return await _readIosPhoto(f.path, language, mode);
     Future<void> attempt(String selected, String layout) async {
       if (!attempts.add('$selected/$layout')) return;
       try {

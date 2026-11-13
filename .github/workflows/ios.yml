@@ -67,20 +67,7 @@ jobs:
           delegate = pathlib.Path('ios/Runner/AppDelegate.swift')
           if not delegate.is_file():
               raise SystemExit('Expected the standard Flutter Swift AppDelegate.')
-          delegate.write_text("""import Flutter
-          import UIKit
-
-          @main
-          @objc class AppDelegate: FlutterAppDelegate {
-            override func application(
-              _ application: UIApplication,
-              didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-            ) -> Bool {
-              GeneratedPluginRegistrant.register(with: self)
-              return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-            }
-          }
-          """)
+          delegate.write_text(pathlib.Path('tools/ios/AppDelegate.swift').read_text())
           with plist.open('wb') as f:
               plistlib.dump(data, f, sort_keys=False)
           project = pathlib.Path('ios/Runner.xcodeproj/project.pbxproj')
@@ -89,6 +76,8 @@ jobs:
           text = re.sub(r'INFOPLIST_KEY_UIApplicationSceneManifest_Generation\s*=\s*YES;', 'INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;', text)
           project.write_text(text)
           podfile = pathlib.Path('ios/Podfile')
+          if not podfile.exists():
+              raise SystemExit('Expected the existing iOS CocoaPods project')
           if podfile.exists():
               text = podfile.read_text()
               pattern = r"(?m)^\s*#?\s*platform\s+:ios,\s*['\"]([\d.]+)['\"].*$"
@@ -98,12 +87,22 @@ jobs:
                   text = re.sub(pattern, f"platform :ios, '{version}'", text, count=1)
               else:
                   text = "platform :ios, '15.0'\n" + text
+              hook = re.search(r"(?m)^([ \t]*)post_install do \|installer\|[ \t]*$", text)
+              if not hook:
+                  raise SystemExit('Expected Flutter CocoaPods post_install hook')
+              if 'wv_patch_tesseract(installer)' not in text:
+                  text = text[:hook.end()] + "\n    require_relative '../tools/ios/patch_tesseract'\n    wv_patch_tesseract(installer)" + text[hook.end():]
               podfile.write_text(text)
           PY
+      - name: Run scanner regression checks
+        run: |
+          swift -D WV_OCR_SELF_TEST tools/ios/AppDelegate.swift
+          flutter pub get
+          flutter test
       - name: Build unsigned iPhone app
         run: |
           flutter pub get
-          flutter build ios --release --no-codesign --build-number=2
+          flutter build ios --release --no-codesign --build-number=3
       - name: Package IPA for local signing
         shell: bash
         run: |
@@ -112,6 +111,9 @@ jobs:
           ditto build/ios/iphoneos/Runner.app "$RUNNER_TEMP/wv/Payload/Runner.app"
           # SwiftyTesseract also looks for a native app-bundle tessdata folder.
           ditto assets/tessdata "$RUNNER_TEMP/wv/Payload/Runner.app/tessdata"
+          for lang in eng bul deu nld fra spa ita ron pol por ell tur rus ukr; do
+            test -s "$RUNNER_TEMP/wv/Payload/Runner.app/tessdata/$lang.traineddata"
+          done
           # Validate the actual packaged plist, not just the source file.
           python3 - "$RUNNER_TEMP/wv/Payload/Runner.app" <<'PY'
           import pathlib, plistlib, sys
@@ -137,9 +139,9 @@ jobs:
           PY
           /usr/bin/plutil -lint "$RUNNER_TEMP/wv/Payload/Runner.app/Info.plist"
           cd "$RUNNER_TEMP/wv"
-          /usr/bin/zip -q -r -y "$GITHUB_WORKSPACE/WarrantyVault-v2.ipa" Payload
+          /usr/bin/zip -q -r -y "$GITHUB_WORKSPACE/WarrantyVault-v3.ipa" Payload
       - uses: actions/upload-artifact@v4
         with:
-          name: WarrantyVault-iPhone-v2
-          path: WarrantyVault-v2.ipa
+          name: WarrantyVault-iPhone-v3
+          path: WarrantyVault-v3.ipa
           if-no-files-found: error
