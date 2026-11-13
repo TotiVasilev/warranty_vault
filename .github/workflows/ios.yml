@@ -17,6 +17,17 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - name: Check compatible iOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          if [ "${sdk%%.*}" -ge 27 ]; then
+            echo "This compatibility build needs an iOS SDK earlier than 27."
+            exit 1
+          fi
+          echo "Building with iOS SDK $sdk"
       - name: Prepare iOS project and OCR assets
         shell: bash
         run: |
@@ -45,11 +56,37 @@ jobs:
           data['NSCameraUsageDescription'] = 'Take photos of warranty cards and receipts.'
           data['NSPhotoLibraryUsageDescription'] = 'Choose warranty and receipt photos to import.'
           data['CFBundleDisplayName'] = 'Warranty Vault'
+          # Temporary compatibility path for the UIKit scene-startup crash.
+          # The older SDK still permits the classic AppDelegate lifecycle.
+          print('Original scene manifest:', repr(data.get('UIApplicationSceneManifest')))
+          data.pop('UIApplicationSceneManifest', None)
+          # Flutter recognizes this marker and does not re-run scene migration.
+          data['_UIApplicationSceneManifest'] = {}
+          data['UIMainStoryboardFile'] = 'Main'
+          data['UILaunchStoryboardName'] = 'LaunchScreen'
+          delegate = pathlib.Path('ios/Runner/AppDelegate.swift')
+          if not delegate.is_file():
+              raise SystemExit('Expected the standard Flutter Swift AppDelegate.')
+          delegate.write_text("""import Flutter
+          import UIKit
+
+          @main
+          @objc class AppDelegate: FlutterAppDelegate {
+            override func application(
+              _ application: UIApplication,
+              didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+            ) -> Bool {
+              GeneratedPluginRegistrant.register(with: self)
+              return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+            }
+          }
+          """)
           with plist.open('wb') as f:
               plistlib.dump(data, f, sort_keys=False)
           project = pathlib.Path('ios/Runner.xcodeproj/project.pbxproj')
           text = project.read_text()
           text = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);', lambda m: 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;' if float('.'.join(m[1].split('.')[:2])) < 15 else m[0], text)
+          text = re.sub(r'INFOPLIST_KEY_UIApplicationSceneManifest_Generation\s*=\s*YES;', 'INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;', text)
           project.write_text(text)
           podfile = pathlib.Path('ios/Podfile')
           if podfile.exists():
@@ -66,7 +103,7 @@ jobs:
       - name: Build unsigned iPhone app
         run: |
           flutter pub get
-          flutter build ios --release --no-codesign
+          flutter build ios --release --no-codesign --build-number=2
       - name: Package IPA for local signing
         shell: bash
         run: |
@@ -75,10 +112,34 @@ jobs:
           ditto build/ios/iphoneos/Runner.app "$RUNNER_TEMP/wv/Payload/Runner.app"
           # SwiftyTesseract also looks for a native app-bundle tessdata folder.
           ditto assets/tessdata "$RUNNER_TEMP/wv/Payload/Runner.app/tessdata"
+          # Validate the actual packaged plist, not just the source file.
+          python3 - "$RUNNER_TEMP/wv/Payload/Runner.app" <<'PY'
+          import pathlib, plistlib, sys
+          app = pathlib.Path(sys.argv[1])
+          p = app / 'Info.plist'
+          with p.open('rb') as f:
+              data = plistlib.load(f)
+          print('Built scene manifest:', repr(data.get('UIApplicationSceneManifest')))
+          sdk = data.get('DTSDKName', '')
+          if not sdk.startswith('iphoneos') or int(sdk.removeprefix('iphoneos').split('.')[0]) >= 27:
+              raise SystemExit(f'Unexpected SDK for compatibility build: {sdk}')
+          data.pop('UIApplicationSceneManifest', None)
+          data.pop('_UIApplicationSceneManifest', None)
+          data['UIMainStoryboardFile'] = 'Main'
+          assert (app / 'Base.lproj' / 'Main.storyboardc').is_dir() or (app / 'Main.storyboardc').is_dir(), 'Main storyboard missing'
+          with p.open('wb') as f:
+              plistlib.dump(data, f, fmt=plistlib.FMT_XML, sort_keys=False)
+          with p.open('rb') as f:
+              checked = plistlib.load(f)
+          assert 'UIApplicationSceneManifest' not in checked
+          assert checked['UIMainStoryboardFile'] == 'Main'
+          print('Validated packaged legacy startup configuration:', sdk, checked.get('CFBundleVersion'))
+          PY
+          /usr/bin/plutil -lint "$RUNNER_TEMP/wv/Payload/Runner.app/Info.plist"
           cd "$RUNNER_TEMP/wv"
-          /usr/bin/zip -q -r -y "$GITHUB_WORKSPACE/WarrantyVault.ipa" Payload
+          /usr/bin/zip -q -r -y "$GITHUB_WORKSPACE/WarrantyVault-v2.ipa" Payload
       - uses: actions/upload-artifact@v4
         with:
-          name: WarrantyVault-iPhone
-          path: WarrantyVault.ipa
+          name: WarrantyVault-iPhone-v2
+          path: WarrantyVault-v2.ipa
           if-no-files-found: error
