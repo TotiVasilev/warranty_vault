@@ -1,19 +1,49 @@
 import Foundation
 
-// Pure geometry: convert independent OCR boxes into horizontal table rows.
+// Pure geometry: deliberately independent of Apple and OCR framework types.
+// Both native engines convert their rectangles at the boundary below.
+struct WVRect {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+
+    var minX: Double { x }
+    var minY: Double { y }
+    var maxY: Double { y + height }
+    var midY: Double { y + height / 2 }
+    var isValid: Bool {
+        x.isFinite && y.isFinite && width.isFinite && height.isFinite &&
+        width > 0 && height > 0 && maxY.isFinite
+    }
+}
+
 struct WVTextBox {
     let text: String
-    let rect: CGRect // top-left origin, same coordinate space for all boxes
+    let rect: WVRect // top-left origin, same coordinate space for all boxes
+}
+
+// Vision uses a bottom-left origin. The row algorithm uses top-left.
+func wvVisionRect(x: Double, y: Double, width: Double, height: Double) -> WVRect {
+    WVRect(x: x, y: 1 - (y + height), width: width, height: height)
 }
 
 func wvRows(_ input: [WVTextBox]) -> String {
-    let boxes = input.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.rect.width > 0 && $0.rect.height > 0 }
-    let sorted = boxes.sorted { $0.rect.midY == $1.rect.midY ? $0.rect.minX < $1.rect.minX : $0.rect.midY < $1.rect.midY }
+    var boxes: [WVTextBox] = []
+    for item in input {
+        if item.rect.isValid && !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            boxes.append(item)
+        }
+    }
+    let sorted: [WVTextBox] = boxes.sorted(by: { (lhs: WVTextBox, rhs: WVTextBox) -> Bool in
+        if lhs.rect.midY == rhs.rect.midY { return lhs.rect.minX < rhs.rect.minX }
+        return lhs.rect.midY < rhs.rect.midY
+    })
     var rows: [[WVTextBox]] = []
     for box in sorted {
         // Match the nearest vertically overlapping row; avoid joining adjacent lines.
         var best: Int? = nil
-        var distance = CGFloat.infinity
+        var distance = Double.infinity
         for i in rows.indices {
             let reference = rows[i][0].rect
             let delta = abs(reference.midY - box.rect.midY)
@@ -24,25 +54,37 @@ func wvRows(_ input: [WVTextBox]) -> String {
         }
         if let index = best { rows[index].append(box) } else { rows.append([box]) }
     }
-    return rows.map { row in
-        row.sorted { $0.rect.minX < $1.rect.minX }.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: " ")
-    }.joined(separator: "\n")
+    var lines: [String] = []
+    for row in rows {
+        let ordered = row.sorted(by: { (lhs: WVTextBox, rhs: WVTextBox) -> Bool in
+            lhs.rect.minX < rhs.rect.minX
+        })
+        lines.append(ordered.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: " "))
+    }
+    return lines.joined(separator: "\n")
 }
 
 #if WV_OCR_SELF_TEST
 // Run with swift -D WV_OCR_SELF_TEST tools/ios/AppDelegate.swift
-func box(_ text: String, _ x: CGFloat, _ y: CGFloat, _ width: CGFloat = 70) -> WVTextBox {
-    WVTextBox(text: text, rect: CGRect(x: x, y: y, width: width, height: 14))
+func box(_ text: String, _ x: Double, _ y: Double, _ width: Double = 70) -> WVTextBox {
+    WVTextBox(text: text, rect: WVRect(x: x, y: y, width: width, height: 14))
 }
 let shuffled = [box("96 months", 330, 82), box("SERIAL", 210, 10), box("RAM 8 GB", 10, 82), box("RAM 16 GB", 10, 60), box("DESCRIPTION", 10, 10), box("ABC123456", 210, 61), box("36 months", 330, 39), box("WARRANTY", 330, 10), box("Motherboard", 10, 38), box("DEF234567", 210, 39), box("96 months", 330, 60), box("GHI345678", 210, 82)]
 let expected = "DESCRIPTION SERIAL WARRANTY\nMotherboard DEF234567 36 months\nRAM 16 GB ABC123456 96 months\nRAM 8 GB GHI345678 96 months"
 precondition(wvRows(shuffled) == expected, wvRows(shuffled))
 precondition(wvRows([]).isEmpty)
 precondition(wvRows([box("Описание", 0, 0), box("Serial number", 100, 1), box("Гаранция", 230, 0)]) == "Описание Serial number Гаранция")
-print("OCR geometry self-test passed (row order, mixed scripts, empty input).")
+let visionTop = WVTextBox(text: "First", rect: wvVisionRect(x: 0.1, y: 0.8, width: 0.2, height: 0.05))
+let visionBottom = WVTextBox(text: "Second", rect: wvVisionRect(x: 0.1, y: 0.2, width: 0.2, height: 0.05))
+precondition(wvRows([visionBottom, visionTop]) == "First\nSecond")
+let invalid = WVTextBox(text: "Invalid", rect: WVRect(x: 0, y: 0, width: 0, height: 14))
+let nonfinite = WVTextBox(text: "Invalid", rect: WVRect(x: 0, y: .nan, width: 10, height: 14))
+precondition(wvRows([invalid, nonfinite, box("  ", 0, 0), box("Valid", 10, 10)]) == "Valid")
+print("OCR geometry self-test passed (row order, mixed scripts, empty/invalid boxes, Vision coordinates).")
 #else
 import Flutter
 import UIKit
+import CoreGraphics
 import Vision
 import ImageIO
 import SwiftyTesseract
@@ -109,8 +151,11 @@ import SwiftyTesseract
                     try VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:]).perform([request])
                     let boxes: [WVTextBox] = (request.results ?? []).compactMap { observation in
                         guard let text = observation.topCandidates(1).first?.string else { return nil }
-                        let r = observation.boundingBox
-                        return WVTextBox(text: text, rect: CGRect(x: r.minX, y: 1 - r.maxY, width: r.width, height: r.height))
+                        let r: CoreGraphics.CGRect = observation.boundingBox
+                        return WVTextBox(text: text, rect: wvVisionRect(
+                            x: Double(r.origin.x), y: Double(r.origin.y),
+                            width: Double(r.size.width), height: Double(r.size.height)
+                        ))
                     }
                     candidates.append(wvRows(boxes))
                 } catch { /* Tesseract below remains available. */ }
@@ -132,7 +177,14 @@ import SwiftyTesseract
                 if case .success(let text) = reader.performOCR(on: UIImage(cgImage: cg)) {
                     candidates.append(text)
                     if case .success(let blocks) = reader.recognizedBlocks(for: .word) {
-                        candidates.append(wvRows(blocks.map { WVTextBox(text: $0.text, rect: $0.boundingBox) }))
+                        let boxes: [WVTextBox] = blocks.map { block in
+                            let r: CoreGraphics.CGRect = block.boundingBox
+                            return WVTextBox(text: block.text, rect: WVRect(
+                                x: Double(r.origin.x), y: Double(r.origin.y),
+                                width: Double(r.size.width), height: Double(r.size.height)
+                            ))
+                        }
+                        candidates.append(wvRows(boxes))
                     }
                 }
             }
