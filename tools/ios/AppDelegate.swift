@@ -69,18 +69,20 @@ func wvRows(_ input: [WVTextBox]) -> String {
 func box(_ text: String, _ x: Double, _ y: Double, _ width: Double = 70) -> WVTextBox {
     WVTextBox(text: text, rect: WVRect(x: x, y: y, width: width, height: 14))
 }
-let shuffled = [box("96 months", 330, 82), box("SERIAL", 210, 10), box("RAM 8 GB", 10, 82), box("RAM 16 GB", 10, 60), box("DESCRIPTION", 10, 10), box("ABC123456", 210, 61), box("36 months", 330, 39), box("WARRANTY", 330, 10), box("Motherboard", 10, 38), box("DEF234567", 210, 39), box("96 months", 330, 60), box("GHI345678", 210, 82)]
-let expected = "DESCRIPTION SERIAL WARRANTY\nMotherboard DEF234567 36 months\nRAM 16 GB ABC123456 96 months\nRAM 8 GB GHI345678 96 months"
-precondition(wvRows(shuffled) == expected, wvRows(shuffled))
-precondition(wvRows([]).isEmpty)
-precondition(wvRows([box("Описание", 0, 0), box("Serial number", 100, 1), box("Гаранция", 230, 0)]) == "Описание Serial number Гаранция")
-let visionTop = WVTextBox(text: "First", rect: wvVisionRect(x: 0.1, y: 0.8, width: 0.2, height: 0.05))
-let visionBottom = WVTextBox(text: "Second", rect: wvVisionRect(x: 0.1, y: 0.2, width: 0.2, height: 0.05))
-precondition(wvRows([visionBottom, visionTop]) == "First\nSecond")
-let invalid = WVTextBox(text: "Invalid", rect: WVRect(x: 0, y: 0, width: 0, height: 14))
-let nonfinite = WVTextBox(text: "Invalid", rect: WVRect(x: 0, y: .nan, width: 10, height: 14))
-precondition(wvRows([invalid, nonfinite, box("  ", 0, 0), box("Valid", 10, 10)]) == "Valid")
-print("OCR geometry self-test passed (row order, mixed scripts, empty/invalid boxes, Vision coordinates).")
+private let wvSelfTest: Void = {
+    let shuffled = [box("96 months", 330, 82), box("SERIAL", 210, 10), box("RAM 8 GB", 10, 82), box("RAM 16 GB", 10, 60), box("DESCRIPTION", 10, 10), box("ABC123456", 210, 61), box("36 months", 330, 39), box("WARRANTY", 330, 10), box("Motherboard", 10, 38), box("DEF234567", 210, 39), box("96 months", 330, 60), box("GHI345678", 210, 82)]
+    let expected = "DESCRIPTION SERIAL WARRANTY\nMotherboard DEF234567 36 months\nRAM 16 GB ABC123456 96 months\nRAM 8 GB GHI345678 96 months"
+    precondition(wvRows(shuffled) == expected, wvRows(shuffled))
+    precondition(wvRows([]).isEmpty)
+    precondition(wvRows([box("Описание", 0, 0), box("Serial number", 100, 1), box("Гаранция", 230, 0)]) == "Описание Serial number Гаранция")
+    let visionTop = WVTextBox(text: "First", rect: wvVisionRect(x: 0.1, y: 0.8, width: 0.2, height: 0.05))
+    let visionBottom = WVTextBox(text: "Second", rect: wvVisionRect(x: 0.1, y: 0.2, width: 0.2, height: 0.05))
+    precondition(wvRows([visionBottom, visionTop]) == "First\nSecond")
+    let invalid = WVTextBox(text: "Invalid", rect: WVRect(x: 0, y: 0, width: 0, height: 14))
+    let nonfinite = WVTextBox(text: "Invalid", rect: WVRect(x: 0, y: .nan, width: 10, height: 14))
+    precondition(wvRows([invalid, nonfinite, box("  ", 0, 0), box("Valid", 10, 10)]) == "Valid")
+    print("OCR geometry self-test passed (row order, mixed scripts, empty/invalid boxes, Vision coordinates).")
+}()
 #else
 import Flutter
 import UIKit
